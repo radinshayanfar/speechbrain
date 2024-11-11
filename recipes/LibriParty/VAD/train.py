@@ -30,6 +30,7 @@ from data_augment import augment_data
 from hyperpyyaml import load_hyperpyyaml
 
 import speechbrain as sb
+from speechbrain.inference.speaker import SpeakerRecognition
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.utils.logger import get_logger
 
@@ -62,6 +63,10 @@ class VADBrain(sb.Brain):
         feats = self.modules.mean_var_norm(feats, lens)
         feats = feats.detach()
         outputs = self.modules.cnn(feats)
+        # print("wavs", wavs.shape)
+        # print("targets", targets.shape)
+        # print("feats", feats.shape)
+        # print("outputs shape", outputs.shape)
 
         outputs = outputs.reshape(
             outputs.shape[0],
@@ -69,8 +74,17 @@ class VADBrain(sb.Brain):
             outputs.shape[2] * outputs.shape[3],
         )
 
-        outputs, h = self.modules.rnn(outputs)
-        outputs = self.modules.dnn(outputs)
+        # TODO: replace this with real ecapa embeddings
+        embs = torch.zeros((outputs.shape[0], 1, self.hparams.ecapa_emb_dim), device=outputs.device)
+        embs = embs.expand(embs.shape[0], outputs.shape[1], -1)
+        outputs = torch.cat((outputs, embs), dim=-1)
+
+        # print("outputs after cnn and reshape", outputs.shape)
+        # outputs, h = self.modules.rnn(outputs)
+        # print("outputs after rnn", outputs.shape)
+        # outputs = self.modules.dnn(outputs)
+        # print("outputs after dnn", outputs.shape)
+        # exit()
         return outputs, lens
 
     def compute_objectives(self, predictions, batch, stage):
@@ -266,6 +280,10 @@ if __name__ == "__main__":
 
     # Dataset IO prep: creating Dataset objects
     train_data, valid_data, test_data = dataio_prep(hparams)
+
+    verification = SpeakerRecognition.from_hparams(hparams["ecapa_pretrain_path"], savedir=hparams["ecapa_save_path"])
+    # verification = verification.to("cuda:0")
+    hparams["modules"].update({"verification": verification})
 
     # Trainer initialization
     vad_brain = VADBrain(

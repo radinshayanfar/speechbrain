@@ -15,7 +15,7 @@
 # Seed and output folders
 seed: 1986
 __set_seed: !apply:speechbrain.utils.seed_everything [!ref <seed>]
-output_folder: !ref results/VAD_CRDNN/<seed>
+output_folder: !ref results/SVAD/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -148,7 +148,7 @@ cnn: !new:speechbrain.nnet.containers.Sequential
         kernel_size: (3, 3)
 
 rnn: !new:speechbrain.nnet.RNN.GRU
-    input_shape: [null, null, 320]
+    input_shape: [null, null, !ref <ecapa_emb_dim> + 320]
     hidden_size: !ref <rnn_neurons>
     num_layers: !ref <rnn_layers>
     bidirectional: True
@@ -201,3 +201,8 @@ train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
 
 train_stats: !name:speechbrain.utils.metric_stats.BinaryMetricStats
 test_stats: !name:speechbrain.utils.metric_stats.BinaryMetricStats
+
+# ======== ECAPA
+ecapa_pretrain_path: speechbrain/spkrec-ecapa-voxceleb
+ecapa_save_path: !ref <save_folder>/emb_model/
+ecapa_emb_dim: 192
