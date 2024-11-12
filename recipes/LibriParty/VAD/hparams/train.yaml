@@ -19,8 +19,9 @@ output_folder: !ref results/SVAD/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
-# LibriParty (main data)
-data_folder: !PLACEHOLDER  # e.g. /path/to/LibriParty
+# AMI (main data)
+data_folder: !PLACEHOLDER  # e.g. /path/to/amicorpus
+manual_annot_folder: !PLACEHOLDER # e.g., /path/to/ami_public_manual_1.6.2/
 
 # Openrir Dataset for augmentation
 data_folder_noise: !ref <data_folder>/noise # The noisy sequences for data augmentation will automatically be downloaded here.
@@ -32,14 +33,25 @@ musan_folder: !PLACEHOLDER  # e.g, /path/to/musan (download it from the web befo
 commonlanguage_folder: !PLACEHOLDER  # e.g, /path/to/commonlang (download it from the web before)
 
 # Manifest files (created by the data preparation)
-annotation_train: !ref <save_folder>/train.json
-annotation_valid: !ref <save_folder>/valid.json
-annotation_test: !ref <save_folder>/test.json
+ref_rttm_dir: !ref <save_folder>/ref_rttms
+meta_data_dir: !ref <save_folder>/metadata
+
+annotation_train: !ref <save_folder>/metadata/ami_train.Mix-Lapel.vad_segs.json
+annotation_valid: !ref <save_folder>/metadata/ami_dev.Mix-Lapel.vad_segs.json
+annotation_test: !ref <save_folder>/metadata/ami_eval.Mix-Lapel.vad_segs.json
 music_csv: !ref <save_folder>/music.csv
 noise_csv: !ref <save_folder>/noise.csv
 speech_csv: !ref <save_folder>/speech.csv
 multilang_speech_csv: !ref <save_folder>/multilang_speech.csv
 skip_prep: False # Skip data preparation
+
+# AMI data_prep parameters
+split_type: 'full_corpus_asr'
+skip_TNO: True
+# Options for mic_type: 'Mix-Lapel', 'Mix-Headset', 'Array1', 'Array1-01', 'BeamformIt'
+mic_type: 'Mix-Lapel'
+max_subseg_dur: 3.0
+subseg_overlap: 1.5
 
 ####################### Training Parameters ####################################
 N_epochs: 100

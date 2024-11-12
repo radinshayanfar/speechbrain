@@ -154,18 +154,14 @@ def dataio_prep(hparams):
     "Creates the datasets and their data processing pipelines."
 
     # 1. Declarations:
-    data_folder = hparams["data_folder"]
     train = sb.dataio.dataset.DynamicItemDataset.from_json(
         json_path=hparams["annotation_train"],
-        replacements={"data_root": data_folder},
     )
     validation = sb.dataio.dataset.DynamicItemDataset.from_json(
         json_path=hparams["annotation_valid"],
-        replacements={"data_root": data_folder},
     )
     test = sb.dataio.dataset.DynamicItemDataset.from_json(
         json_path=hparams["annotation_test"],
-        replacements={"data_root": data_folder},
     )
 
     # 2. Define audio pipeline:
@@ -174,9 +170,15 @@ def dataio_prep(hparams):
     def audio_pipeline(wav):
         sig = sb.dataio.dataio.read_audio(wav)
         return sig
+    
+    @sb.utils.data_pipeline.takes("target_speaker")
+    @sb.utils.data_pipeline.provides("sample_signal")
+    def target_audio_pipeline(wav):
+        sig = sb.dataio.dataio.read_audio(wav["sample"])
+        return sig
 
     # 3. Define text pipeline:
-    @sb.utils.data_pipeline.takes("speech")
+    @sb.utils.data_pipeline.takes("target_speech")
     @sb.utils.data_pipeline.provides("target")
     def vad_targets(speech, hparams=hparams):
         boundaries = (
@@ -205,9 +207,10 @@ def dataio_prep(hparams):
     # Create dataset
     datasets = [train, validation, test]
     sb.dataio.dataset.add_dynamic_item(datasets, audio_pipeline)
+    sb.dataio.dataset.add_dynamic_item(datasets, target_audio_pipeline)
     sb.dataio.dataset.add_dynamic_item(datasets, vad_targets)
     sb.dataio.dataset.set_output_keys(
-        datasets, ["id", "signal", "target", "speech"]
+        datasets, ["id", "signal", "target", "sample_signal"]
     )
 
     # Split dataset
@@ -234,19 +237,26 @@ if __name__ == "__main__":
         overrides=overrides,
     )
 
-    from libriparty_prepare import prepare_libriparty
+    # TODO: merge this from ami_prepare.py
+    from ami_prepare import prepare_ami
 
     # LibriParty preparation
-    run_on_main(
-        prepare_libriparty,
-        kwargs={
-            "data_folder": hparams["data_folder"],
-            "save_json_folder": hparams["save_folder"],
-            "sample_rate": hparams["sample_rate"],
-            "window_size": hparams["example_length"],
-            "skip_prep": hparams["skip_prep"],
-        },
-    )
+    if not hparams["skip_prep"]:
+        run_on_main(
+            prepare_ami,
+            kwargs={
+                "data_folder": hparams["data_folder"],
+                "save_folder": hparams["save_folder"],
+                "ref_rttm_dir": hparams["ref_rttm_dir"],
+                "meta_data_dir": hparams["meta_data_dir"],
+                "manual_annot_folder": hparams["manual_annot_folder"],
+                "split_type": hparams["split_type"],
+                "skip_TNO": hparams["skip_TNO"],
+                "mic_type": hparams["mic_type"],
+                "max_subseg_dur": hparams["max_subseg_dur"],
+                "subseg_overlap": hparams["subseg_overlap"],
+            },
+        )
 
     # Prepare openrir
     run_on_main(hparams["prepare_noise_data"])
