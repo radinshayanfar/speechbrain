@@ -26,6 +26,7 @@ import sys
 
 import numpy as np
 import torch
+import torchaudio
 from data_augment import augment_data
 from hyperpyyaml import load_hyperpyyaml
 
@@ -45,26 +46,29 @@ class VADBrain(sb.Brain):
         batch = batch.to(self.device)
         wavs, lens = batch.signal
         targets, lens_targ = batch.target
+        target_spkr_wavs, target_spkr_lens = batch.sample_signal
         self.targets = targets
 
-        if stage == sb.Stage.TRAIN:
-            wavs, targets, lens = augment_data(
-                self.noise_datasets,
-                self.speech_datasets,
-                wavs,
-                targets,
-                lens_targ,
-            )
-            self.lens = lens
-            self.targets = targets
+        # if stage == sb.Stage.TRAIN:
+        #     wavs, targets, lens = augment_data(
+        #         self.noise_datasets,
+        #         self.speech_datasets,
+        #         wavs,
+        #         targets,
+        #         lens_targ,
+        #     )
+        #     self.lens = lens
+        #     self.targets = targets
 
         # From wav input to output binary prediction
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.mean_var_norm(feats, lens)
         feats = feats.detach()
         outputs = self.modules.cnn(feats)
+
         # print("wavs", wavs.shape)
         # print("targets", targets.shape)
+        # print("lens targets", lens_targ.shape)
         # print("feats", feats.shape)
         # print("outputs shape", outputs.shape)
 
@@ -75,14 +79,15 @@ class VADBrain(sb.Brain):
         )
 
         # TODO: replace this with real ecapa embeddings
-        embs = torch.zeros((outputs.shape[0], 1, self.hparams.ecapa_emb_dim), device=outputs.device)
+        # embs = torch.zeros((outputs.shape[0], 1, self.hparams.ecapa_emb_dim), device=outputs.device)
+        embs = self.modules.verification.encode_batch(target_spkr_wavs, target_spkr_lens).detach()
         embs = embs.expand(embs.shape[0], outputs.shape[1], -1)
         outputs = torch.cat((outputs, embs), dim=-1)
 
         # print("outputs after cnn and reshape", outputs.shape)
-        # outputs, h = self.modules.rnn(outputs)
+        outputs, h = self.modules.rnn(outputs)
         # print("outputs after rnn", outputs.shape)
-        # outputs = self.modules.dnn(outputs)
+        outputs = self.modules.dnn(outputs)
         # print("outputs after dnn", outputs.shape)
         # exit()
         return outputs, lens
@@ -291,8 +296,7 @@ if __name__ == "__main__":
     # Dataset IO prep: creating Dataset objects
     train_data, valid_data, test_data = dataio_prep(hparams)
 
-    verification = SpeakerRecognition.from_hparams(hparams["ecapa_pretrain_path"], savedir=hparams["ecapa_save_path"])
-    # verification = verification.to("cuda:0")
+    verification = SpeakerRecognition.from_hparams(hparams["ecapa_pretrain_path"], savedir=hparams["ecapa_save_path"], run_opts={"device": "cuda"})
     hparams["modules"].update({"verification": verification})
 
     # Trainer initialization
