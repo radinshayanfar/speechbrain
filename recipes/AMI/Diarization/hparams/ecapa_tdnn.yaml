@@ -57,7 +57,7 @@ dev_meta_file: !ref <meta_data_dir>/ami_dev.<mic_type>.subsegs.json
 eval_meta_file: !ref <meta_data_dir>/ami_eval.<mic_type>.subsegs.json
 vad_type: 'oracle'
 max_subseg_dur: 3.0
-overlap: 1.5
+subseg_overlap: 1.5
 
 backend: 'SC' # options: 'kmeans' # Note: kmeans goes only with cos affinity
 

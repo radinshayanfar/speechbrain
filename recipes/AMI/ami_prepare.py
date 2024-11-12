@@ -10,11 +10,17 @@ import glob
 import json
 import os
 import xml.etree.ElementTree as et
-
-from ami_splits import get_AMI_split
+import random
+from tqdm import tqdm
 
 from speechbrain.dataio.dataio import load_pkl, save_pkl
 from speechbrain.utils.logger import get_logger
+from speechbrain.dataio.dataio import read_audio_info
+
+from ami_splits import get_AMI_split
+
+
+random.seed(42)
 
 logger = get_logger(__name__)
 SAMPLERATE = 16000
@@ -31,7 +37,9 @@ def prepare_ami(
     mic_type="Lapel",
     vad_type="oracle",
     max_subseg_dur=3.0,
-    overlap=1.5,
+    subseg_overlap=1.5,
+    max_seg_dur=5,
+    seg_overlap=2.5,
 ):
     """
     Prepares reference RTTM and JSON files for the AMI dataset.
@@ -59,7 +67,7 @@ def prepare_ami(
         Type of VAD. Kept for future when VAD will be added.
     max_subseg_dur : float
         Duration in seconds of a subsegments to be prepared from larger segments.
-    overlap : float
+    subseg_overlap : float
         Overlap duration in seconds between adjacent subsegments
 
     Returns
@@ -95,7 +103,7 @@ def prepare_ami(
         "mic_type": mic_type,
         "vad": vad_type,
         "max_subseg_dur": max_subseg_dur,
-        "overlap": overlap,
+        "subseg_overlap": subseg_overlap,
         "meta_files": meta_files,
     }
 
@@ -169,8 +177,18 @@ def prepare_ami(
             data_folder,
             meta_filename_prefix,
             max_subseg_dur,
-            overlap,
+            subseg_overlap,
             mic_type,
+        )
+
+        prepare_VAD_metadata(
+            rttm_file,
+            meta_data_dir,
+            data_folder,
+            meta_filename_prefix,
+            mic_type,
+            max_seg_dur,
+            seg_overlap,
         )
 
     save_opt_file = os.path.join(save_folder, opt_file)
@@ -294,13 +312,13 @@ def prepare_segs_for_RTTM(
             RTTM = RTTM + rttm_per_rec
 
     # Write one RTTM as groundtruth. For example, "fullref_eval.rttm"
-    with open(out_rttm_file, "w", encoding="utf-8") as f:
+    with open(out_rttm_file, "w") as f:
         for item in RTTM:
             f.write("%s\n" % item)
 
 
 def is_overlapped(end1, start2):
-    """Returns True if the two segments overlap
+    """Returns True if the two segments subseg_overlap
 
     Arguments
     ---------
@@ -321,7 +339,7 @@ def is_overlapped(end1, start2):
 
 
 def merge_rttm_intervals(rttm_segs):
-    """Merges adjacent segments in rttm if they overlap."""
+    """Merges adjacent segments in rttm if they subseg_overlap."""
     # For one recording
     # rec_id = rttm_segs[0][1]
     rttm_segs.sort(key=lambda x: float(x[3]))
@@ -341,7 +359,7 @@ def merge_rttm_intervals(rttm_segs):
             end = max(end, e)
             merged_segs[-1][3] = str(round(strt, 4))
             merged_segs[-1][4] = str(round((end - strt), 4))
-            merged_segs[-1][7] = "overlap"  # previous_row[7] + '-'+ row[7]
+            merged_segs[-1][7] = "subseg_overlap"  # previous_row[7] + '-'+ row[7]
         else:
             # Add a new disjoint segment
             strt = s
@@ -351,10 +369,10 @@ def merge_rttm_intervals(rttm_segs):
     return merged_segs
 
 
-def get_subsegments(merged_segs, max_subseg_dur=3.0, overlap=1.5):
+def get_subsegments(merged_segs, max_subseg_dur=3.0, subseg_overlap=1.5):
     """Divides bigger segments into smaller sub-segments"""
 
-    shift = max_subseg_dur - overlap
+    shift = max_subseg_dur - subseg_overlap
     subsegments = []
 
     # These rows are in RTTM format
@@ -399,14 +417,14 @@ def get_subsegments(merged_segs, max_subseg_dur=3.0, overlap=1.5):
 
 
 def prepare_metadata(
-    rttm_file, save_dir, data_dir, filename, max_subseg_dur, overlap, mic_type
+    rttm_file, save_dir, data_dir, filename, max_subseg_dur, subseg_overlap, mic_type
 ):
     # Read RTTM, get unique meeting_IDs (from RTTM headers)
     # For each MeetingID. select that meetID -> merge -> subsegment -> json -> append
 
     # Read RTTM
     RTTM = []
-    with open(rttm_file, "r", encoding="utf-8") as f:
+    with open(rttm_file, "r") as f:
         for line in f:
             entry = line[:-1]
             RTTM.append(entry)
@@ -431,19 +449,19 @@ def prepare_metadata(
         MERGED_SEGMENTS = MERGED_SEGMENTS + merged_segs
 
         # Divide segments into smaller sub-segments
-        subsegs = get_subsegments(merged_segs, max_subseg_dur, overlap)
+        subsegs = get_subsegments(merged_segs, max_subseg_dur, subseg_overlap)
         SUBSEGMENTS = SUBSEGMENTS + subsegs
 
     # Write segment AND sub-segments (in RTTM format)
     segs_file = save_dir + "/" + filename + ".segments.rttm"
     subsegment_file = save_dir + "/" + filename + ".subsegments.rttm"
 
-    with open(segs_file, "w", encoding="utf-8") as f:
+    with open(segs_file, "w") as f:
         for row in MERGED_SEGMENTS:
             line_str = " ".join(row)
             f.write("%s\n" % line_str)
 
-    with open(subsegment_file, "w", encoding="utf-8") as f:
+    with open(subsegment_file, "w") as f:
         for row in SUBSEGMENTS:
             line_str = " ".join(row)
             f.write("%s\n" % line_str)
@@ -510,11 +528,111 @@ def prepare_metadata(
             }
 
     out_json_file = save_dir + "/" + filename + "." + mic_type + ".subsegs.json"
-    with open(out_json_file, mode="w", encoding="utf-8") as json_f:
+    with open(out_json_file, mode="w") as json_f:
         json.dump(json_dict, json_f, indent=2)
 
     msg = "%s JSON prepared" % (out_json_file)
     logger.debug(msg)
+
+
+class Segment:
+    def __init__(self, start, end, speaker=None):
+        self.start = start
+        self.end = end
+        self.speaker = speaker
+    
+    def __str__(self):
+        return f"Segment(start={self.start}, end={self.end}, speaker={self.speaker})"
+
+    def get_overlap(self, other):
+        if self.start < other.end and self.end > other.start:
+            overlap_start = max(self.start, other.start)
+            overlap_end = min(self.end, other.end)
+            return Segment(overlap_start, overlap_end, self.speaker)
+        else:
+            return None
+
+
+def find_random_spkr_segment(RTTM, rec_id, spkr_id):
+    spkr_segs = []
+    min_len = 5
+    while len(spkr_segs) == 0:
+        spkr_segs = [row for row in RTTM if row.split()[7] == spkr_id and float(row.split()[4]) > min_len]
+        min_len -= 1
+        if min_len < 0:
+            logger.warning(f"No segment found for speaker {spkr_id} in recording {rec_id}")
+            return None
+    random_row = random.choice(spkr_segs)
+    return Segment(float(random_row.split()[3]), float(random_row.split()[3]) + float(random_row.split()[4]), spkr_id)
+
+
+def prepare_VAD_metadata(
+    rttm_file, save_dir, data_dir, filename, mic_type, max_seg_dur, subseg_overlap,
+):
+    # Read RTTM, get unique meeting_IDs (from RTTM headers)
+    # For each MeetingID. select that meetID -> merge -> subsegment -> json -> append
+
+    # Read RTTM
+    RTTM = []
+    with open(rttm_file, "r") as f:
+        for line in f:
+            entry = line[:-1]
+            RTTM.append(entry)
+
+    spkr_info = filter(lambda x: x.startswith("SPKR-INFO"), RTTM)
+    rec_ids = list(set([row.split(" ")[1] for row in spkr_info]))
+    rec_ids.sort()  # sorting just to make JSON look in proper sequence
+
+    SEGMENTS = []
+    for rec_id in tqdm(rec_ids):
+        wav_file_path = f"{data_dir}/{rec_id}/audio/{rec_id}.{mic_type}.wav"
+        rec_info = read_audio_info(wav_file_path)
+        num_frames = rec_info.num_frames
+
+        spkr_ids = filter(lambda x: x.startswith(f"SPKR-INFO {rec_id}"), RTTM)
+        spkr_ids = [spkr_id.split()[7] for spkr_id in spkr_ids]
+
+        segs_iter = list(filter(
+            lambda x: x.startswith("SPEAKER " + str(rec_id)), RTTM
+        ))
+        spkr_segments = [Segment(float(row.split()[3]), float(row.split()[3]) + float(row.split()[4]), row.split()[7]) for row in segs_iter]
+
+        current_frame = 0
+        while current_frame < num_frames:
+            end_frame = min(current_frame + int(max_seg_dur * SAMPLERATE), num_frames)
+            seg = Segment(current_frame / SAMPLERATE, end_frame / SAMPLERATE)
+            for spkr in spkr_ids:
+                spkr_sample = find_random_spkr_segment(segs_iter, rec_id, spkr)
+                if spkr_sample is None:
+                    continue
+
+                target_speech = []
+                for spkr_segment in spkr_segments:
+                    if (overlap := seg.get_overlap(spkr_segment)) is not None and spkr_segment.speaker == spkr:
+                        target_speech.append([overlap.start - seg.start, overlap.end - seg.start])
+                
+                SEGMENTS.append({
+                    "wav": {
+                        "file": wav_file_path,
+                        "start": int(seg.start * SAMPLERATE),
+                        "stop": int(seg.end * SAMPLERATE),
+                    },
+                    "target_speaker": {
+                        "id": spkr,
+                        "sample": {
+                            "wav": wav_file_path,
+                            "start": int(spkr_sample.start * SAMPLERATE),
+                            "stop": int(spkr_sample.end * SAMPLERATE),
+                        },
+                    },
+                    "target_speech": target_speech,
+                })
+
+            current_frame += int((max_seg_dur - subseg_overlap) * SAMPLERATE)
+        
+    out_json_file = os.path.join(save_dir, f"{filename}.{mic_type}.vad_segs.json")
+    with open(out_json_file, 'w') as f:
+        f.write(json.dumps(SEGMENTS, indent=2))
 
 
 def skip(save_folder, conf, meta_files, opt_file):

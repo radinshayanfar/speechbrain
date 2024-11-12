@@ -527,10 +527,11 @@ if __name__ == "__main__":  # noqa: C901
                 "mic_type": params["mic_type"],
                 "vad_type": params["vad_type"],
                 "max_subseg_dur": params["max_subseg_dur"],
-                "overlap": params["overlap"],
+                "subseg_overlap": params["subseg_overlap"],
             },
         )
-
+    
+    exit()
     # Create experiment directory.
     sb.core.create_experiment_directory(
         experiment_directory=params["output_folder"],
