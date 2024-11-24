@@ -34,6 +34,7 @@ import speechbrain as sb
 from speechbrain.inference.speaker import SpeakerRecognition
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.utils.logger import get_logger
+from torch.utils.data import random_split
 
 logger = get_logger(__name__)
 
@@ -49,18 +50,22 @@ class VADBrain(sb.Brain):
         target_spkr_wavs, target_spkr_lens = batch.sample_signal
         self.targets = targets
 
-        # if stage == sb.Stage.TRAIN:
-        #     wavs, targets, lens = augment_data(
-        #         self.noise_datasets,
-        #         self.speech_datasets,
-        #         wavs,
-        #         targets,
-        #         lens_targ,
-        #     )
-        #     self.lens = lens
-        #     self.targets = targets
+        # print("wavs", wavs.shape)
+        # print("targets", targets.shape)
+        # print("lens", lens.shape)
+        # print("lens targets", lens_targ.shape)
 
-        # From wav input to output binary prediction
+        if stage == sb.Stage.TRAIN:
+            wavs, targets, lens = augment_data(
+                self.noise_datasets,
+                self.speech_datasets,
+                wavs,
+                targets,
+                lens_targ,
+            )
+            self.lens = lens
+            self.targets = targets
+
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.mean_var_norm(feats, lens)
         feats = feats.detach()
@@ -78,10 +83,11 @@ class VADBrain(sb.Brain):
             outputs.shape[2] * outputs.shape[3],
         )
 
-        # TODO: replace this with real ecapa embeddings
-        # embs = torch.zeros((outputs.shape[0], 1, self.hparams.ecapa_emb_dim), device=outputs.device)
         embs = self.modules.verification.encode_batch(target_spkr_wavs, target_spkr_lens).detach()
         embs = embs.expand(embs.shape[0], outputs.shape[1], -1)
+        #TODO: instead of repeating the speaker embeddings, we can augment to generate more data of the same speaker
+        # Repeat the speaker embeddings to match the augmented data. The order is consistent with the augmented data. 
+        embs = embs.repeat(outputs.shape[0]//embs.shape[0], 1, 1)
         outputs = torch.cat((outputs, embs), dim=-1)
 
         # print("outputs after cnn and reshape", outputs.shape)
@@ -296,6 +302,12 @@ if __name__ == "__main__":
     # Dataset IO prep: creating Dataset objects
     train_data, valid_data, test_data = dataio_prep(hparams)
 
+    # Train only on a subset of the data
+    if hparams["fast_train"]:
+        train_data = train_data.filtered_sorted(select_n=hparams["max_train_data"])
+        valid_data = valid_data.filtered_sorted(select_n=hparams["max_valid_data"])
+        test_data = valid_data.filtered_sorted(select_n=hparams["max_test_data"])
+
     verification = SpeakerRecognition.from_hparams(hparams["ecapa_pretrain_path"], savedir=hparams["ecapa_save_path"], run_opts={"device": "cuda"})
     hparams["modules"].update({"verification": verification})
 
@@ -309,13 +321,15 @@ if __name__ == "__main__":
     )
 
     # Training/validation loop
-    vad_brain.fit(
-        vad_brain.hparams.epoch_counter,
-        train_data,
-        valid_data,
-        train_loader_kwargs=hparams["train_dataloader_opts"],
-        valid_loader_kwargs=hparams["valid_dataloader_opts"],
-    )
+    with torch.autograd.detect_anomaly():
+        vad_brain.fit(
+            vad_brain.hparams.epoch_counter,
+            train_data,
+            valid_data,
+            train_loader_kwargs=hparams["train_dataloader_opts"],
+            valid_loader_kwargs=hparams["valid_dataloader_opts"],
+            progressbar=True,
+        )
 
     # Test
     vad_brain.evaluate(
