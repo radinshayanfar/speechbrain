@@ -594,6 +594,8 @@ def prepare_VAD_metadata(
 
         current_frame = 0
         while current_frame < num_frames:
+            if current_frame + int(max_seg_dur * SAMPLERATE) > num_frames:
+                break
             end_frame = min(current_frame + int(max_seg_dur * SAMPLERATE), num_frames)
             seg = Segment(current_frame / SAMPLERATE, end_frame / SAMPLERATE)
             for spkr in spkr_ids:
@@ -606,6 +608,8 @@ def prepare_VAD_metadata(
                     if (overlap := seg.get_overlap(spkr_segment)) is not None and spkr_segment.speaker == spkr:
                         target_speech.append([overlap.start - seg.start, overlap.end - seg.start])
                 
+                if len(target_speech) == 0:
+                    continue
                 SEGMENTS[f"{rec_id}_{seg.start}_{seg.end}_{spkr}"] = {
                     "wav": {
                         "file": wav_file_path,

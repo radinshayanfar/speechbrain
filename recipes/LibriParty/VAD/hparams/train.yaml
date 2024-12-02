@@ -223,6 +223,8 @@ ecapa_emb_dim: 192
 # ======== Fast training
 fast_train: True
 # if fast_train is True, the following parameters will be used; else they will be ignored
-max_train_data: 10240
-max_valid_data: 1024
-max_test_data: 1024
+max_train_data: 32768
+max_valid_data: 4096
+max_test_data: 4096
+
+train_on_test: False

@@ -39,6 +39,9 @@ from torch.utils.data import random_split
 logger = get_logger(__name__)
 
 
+# sb.utils.seed.seed_everything(402)
+
+
 class VADBrain(sb.Brain):
     def compute_forward(self, batch, stage):
         """Given an input batch it computes the binary probability.
@@ -55,21 +58,22 @@ class VADBrain(sb.Brain):
         # print("lens", lens.shape)
         # print("lens targets", lens_targ.shape)
 
-        if stage == sb.Stage.TRAIN:
-            wavs, targets, lens = augment_data(
-                self.noise_datasets,
-                self.speech_datasets,
-                wavs,
-                targets,
-                lens_targ,
-            )
-            self.lens = lens
-            self.targets = targets
+        # if stage == sb.Stage.TRAIN:
+        #     wavs, targets, lens = augment_data(
+        #         self.noise_datasets,
+        #         self.speech_datasets,
+        #         wavs,
+        #         targets,
+        #         lens_targ,
+        #     )
+        #     self.lens = lens
+        #     self.targets = targets
 
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.mean_var_norm(feats, lens)
         feats = feats.detach()
         outputs = self.modules.cnn(feats)
+        # output1 = outputs
 
         # print("wavs", wavs.shape)
         # print("targets", targets.shape)
@@ -82,18 +86,30 @@ class VADBrain(sb.Brain):
             outputs.shape[1],
             outputs.shape[2] * outputs.shape[3],
         )
+        # output2 = outputs
 
         embs = self.modules.verification.encode_batch(target_spkr_wavs, target_spkr_lens).detach()
         embs = embs.expand(embs.shape[0], outputs.shape[1], -1)
         #TODO: instead of repeating the speaker embeddings, we can augment to generate more data of the same speaker
         # Repeat the speaker embeddings to match the augmented data. The order is consistent with the augmented data. 
-        embs = embs.repeat(outputs.shape[0]//embs.shape[0], 1, 1)
+        # embs = embs.repeat(outputs.shape[0]//embs.shape[0], 1, 1)
         outputs = torch.cat((outputs, embs), dim=-1)
+        # output3 = outputs
 
         # print("outputs after cnn and reshape", outputs.shape)
         outputs, h = self.modules.rnn(outputs)
+        # output4 = outputs
         # print("outputs after rnn", outputs.shape)
         outputs = self.modules.dnn(outputs)
+        # output5 = outputs
+        # if torch.isnan(outputs).any():
+        #     print("NAN outputs")
+        #     print("output1", output1)
+        #     print("output2", output2)
+        #     print("output3", output3)
+        #     print("output4", output4)
+        #     print("output5", output5)
+        #     exit()
         # print("outputs after dnn", outputs.shape)
         # exit()
         return outputs, lens
@@ -106,6 +122,16 @@ class VADBrain(sb.Brain):
         predictions = predictions[:, : targets.shape[-1], 0]
 
         loss = self.hparams.compute_BCE_cost(predictions, targets, lens)
+        # if torch.isnan(loss).item():
+        #     print(loss.shape)
+        #     loss[()] = 0
+        #     # loss[0] = 0
+        #     print("NAN loss")
+        #     print("loss", loss)
+        #     print(predictions)
+        #     print(targets)
+        #     print(lens)
+
 
         self.train_metrics.append(batch.id, torch.sigmoid(predictions), targets)
         if stage != sb.Stage.TRAIN:
@@ -303,10 +329,27 @@ if __name__ == "__main__":
     train_data, valid_data, test_data = dataio_prep(hparams)
 
     # Train only on a subset of the data
+    # print("before", train_data.data_ids[:10])
     if hparams["fast_train"]:
-        train_data = train_data.filtered_sorted(select_n=hparams["max_train_data"])
-        valid_data = valid_data.filtered_sorted(select_n=hparams["max_valid_data"])
-        test_data = valid_data.filtered_sorted(select_n=hparams["max_test_data"])
+        # train_data = train_data.filtered_sorted(select_n=hparams["max_train_data"])
+        # valid_data = valid_data.filtered_sorted(select_n=hparams["max_valid_data"])
+        # test_data = test_data.filtered_sorted(select_n=hparams["max_test_data"])
+
+        # train_data = torch.utils.data.Subset(train_data, range(hparams["max_train_data"]))
+        # valid_data = torch.utils.data.Subset(valid_data, range(hparams["max_valid_data"]))
+        # test_data = torch.utils.data.Subset(test_data, range(hparams["max_test_data"]))
+
+        train_data.data_ids = train_data.data_ids[:hparams["max_train_data"]]
+        valid_data.data_ids = valid_data.data_ids[:hparams["max_valid_data"]]
+        test_data.data_ids = test_data.data_ids[:hparams["max_test_data"]]
+    # print("after", train_data.data_ids[:10])
+    # if hparams["train_on_test"]:
+    #     train_data, test_data = test_data, train_data
+    #     test_data = test_data.filtered_sorted(select_n=len(train_data))
+    
+    print("train_data", len(train_data))
+    print("valid_data", len(valid_data))
+    print("test_data", len(test_data))
 
     verification = SpeakerRecognition.from_hparams(hparams["ecapa_pretrain_path"], savedir=hparams["ecapa_save_path"], run_opts={"device": "cuda"})
     hparams["modules"].update({"verification": verification})
@@ -321,15 +364,15 @@ if __name__ == "__main__":
     )
 
     # Training/validation loop
-    with torch.autograd.detect_anomaly():
-        vad_brain.fit(
-            vad_brain.hparams.epoch_counter,
-            train_data,
-            valid_data,
-            train_loader_kwargs=hparams["train_dataloader_opts"],
-            valid_loader_kwargs=hparams["valid_dataloader_opts"],
-            progressbar=True,
-        )
+    # with torch.autograd.detect_anomaly():
+    vad_brain.fit(
+        vad_brain.hparams.epoch_counter,
+        train_data,
+        valid_data,
+        train_loader_kwargs=hparams["train_dataloader_opts"],
+        valid_loader_kwargs=hparams["valid_dataloader_opts"],
+        progressbar=True,
+    )
 
     # Test
     vad_brain.evaluate(
