@@ -13,9 +13,13 @@ import xml.etree.ElementTree as et
 import random
 from tqdm import tqdm
 
+import torch
+import speechbrain as sb
 from speechbrain.dataio.dataio import load_pkl, save_pkl
 from speechbrain.utils.logger import get_logger
 from speechbrain.dataio.dataio import read_audio_info
+from speechbrain.inference.speaker import SpeakerRecognition
+
 
 from ami_splits import get_AMI_split
 
@@ -39,6 +43,8 @@ def prepare_ami(
     subseg_overlap=1.5,
     max_seg_dur=5,
     seg_overlap=2.5,
+    ecapa_pretrain_path=None,
+    ecapa_save_path=None,
 ):
     """
     Prepares reference RTTM and JSON files for the AMI dataset.
@@ -186,6 +192,15 @@ def prepare_ami(
             max_seg_dur,
             seg_overlap,
         )
+
+        # prepare_caches(
+        #     meta_data_dir,
+        #     save_folder,
+        #     meta_filename_prefix,
+        #     mic_type,
+        #     ecapa_pretrain_path,
+        #     ecapa_save_path,
+        # )
 
     save_opt_file = os.path.join(save_folder, opt_file)
     save_pkl(conf, save_opt_file)
@@ -632,6 +647,28 @@ def prepare_VAD_metadata(
     out_json_file = os.path.join(save_dir, f"{filename}.{mic_type}.vad_segs.json")
     with open(out_json_file, 'w') as f:
         f.write(json.dumps(SEGMENTS, indent=2))
+
+
+def prepare_caches(meta_data_dir, save_folder, filename, mic_type, ecapa_pretrain_path, ecapa_save_path):
+    logger.info(f"Preparing cache files for {filename}...")
+    # Load the JSON file
+    json_file = os.path.join(meta_data_dir, f"{filename}.{mic_type}.vad_segs.json")
+    with open(json_file, "r") as f:
+        json_dict = json.load(f)
+
+    # Create cache files
+    verification_model = SpeakerRecognition.from_hparams(ecapa_pretrain_path, savedir=ecapa_save_path, run_opts={"device": "cuda"})
+    cache_dir = os.path.join(save_folder, "ecapa_emb_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    for key, value in tqdm(json_dict.items()):
+        if os.path.exists(os.path.join(cache_dir, f"{key}.pt")):
+            continue
+        sig = sb.dataio.dataio.read_audio(value["target_speaker"]["sample"])
+        if len(sig.shape) > 1:
+            sig = sig[:, 0]
+        sig = sig.unsqueeze(0).to("cuda")
+        emb = verification_model.encode_batch(sig).detach()
+        torch.save(emb, os.path.join(cache_dir, f"{key}.pt"))
 
 
 def skip(save_folder, conf, meta_files, opt_file):
