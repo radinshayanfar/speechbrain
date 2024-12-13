@@ -27,7 +27,7 @@ import sys
 import numpy as np
 import torch
 import torchaudio
-from data_augment import augment_data
+from data_augment import augment_data, EmbeddingAugmentation
 from hyperpyyaml import load_hyperpyyaml
 
 import speechbrain as sb
@@ -58,16 +58,16 @@ class VADBrain(sb.Brain):
         # print("lens", lens.shape)
         # print("lens targets", lens_targ.shape)
 
-        # if stage == sb.Stage.TRAIN:
-        #     wavs, targets, lens = augment_data(
-        #         self.noise_datasets,
-        #         self.speech_datasets,
-        #         wavs,
-        #         targets,
-        #         lens_targ,
-        #     )
-        #     self.lens = lens
-        #     self.targets = targets
+        if stage == sb.Stage.TRAIN:
+            wavs, targets, lens = augment_data(
+                self.noise_datasets,
+                self.speech_datasets,
+                wavs,
+                targets,
+                lens_targ,
+            )
+            self.lens = lens
+            self.targets = targets
 
         feats = self.hparams.compute_features(wavs)
         feats = self.modules.mean_var_norm(feats, lens)
@@ -90,9 +90,22 @@ class VADBrain(sb.Brain):
 
         embs = self.modules.verification.encode_batch(target_spkr_wavs, target_spkr_lens).detach()
         embs = embs.expand(embs.shape[0], outputs.shape[1], -1)
-        #TODO: instead of repeating the speaker embeddings, we can augment to generate more data of the same speaker
-        # Repeat the speaker embeddings to match the augmented data. The order is consistent with the augmented data. 
-        # embs = embs.repeat(outputs.shape[0]//embs.shape[0], 1, 1)
+
+        if stage == sb.Stage.TRAIN:
+            augmentor = EmbeddingAugmentation(
+                noise_std=0.01, 
+                dropout_prob=0.1, 
+                salt_pepper_prob=0.01, 
+                frequency_factor=0.1,
+                noise_types=["gaussian", "dropout", "salt_pepper", "frequency"],
+            )
+
+            # Apply augmentation to multiple batches
+            embs = augmentor.multi_forward(embs, out_batch_size=outputs.shape[0]//embs.shape[0])
+        else:
+            # Repeat the speaker embeddings to match the augmented data. The order is consistent with the augmented data. 
+            embs = embs.repeat(outputs.shape[0]//embs.shape[0], 1, 1)
+        
         outputs = torch.cat((outputs, embs), dim=-1)
         # output3 = outputs
 
@@ -343,9 +356,6 @@ if __name__ == "__main__":
         valid_data.data_ids = valid_data.data_ids[:hparams["max_valid_data"]]
         test_data.data_ids = test_data.data_ids[:hparams["max_test_data"]]
     # print("after", train_data.data_ids[:10])
-    # if hparams["train_on_test"]:
-    #     train_data, test_data = test_data, train_data
-    #     test_data = test_data.filtered_sorted(select_n=len(train_data))
     
     print("train_data", len(train_data))
     print("valid_data", len(valid_data))

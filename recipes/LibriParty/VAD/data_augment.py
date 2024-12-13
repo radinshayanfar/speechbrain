@@ -7,6 +7,7 @@ Authors
 import random
 
 import torch
+import torch.nn as nn
 import torchaudio
 
 # fade-in/fade-out definition
@@ -126,9 +127,20 @@ def add_chunk(
         wav_to_paste = wav_to_paste.transpose(1, -1)
 
     # Append the signal
-    wav_chunk[:, chunk_shift:end_chunk] = (
-        wav_chunk[:, chunk_shift:end_chunk] + wav_to_paste
-    )
+    try:
+        wav_chunk[:, chunk_shift:end_chunk] = (
+            wav_chunk[:, chunk_shift:end_chunk] + wav_to_paste
+        )
+    except RuntimeError as e:
+        print(wav_chunk[:, chunk_shift:end_chunk].shape, wav_to_paste.shape)
+        print("begin_sample", begin_sample)
+        print("end_chunk", end_chunk)
+        print("chunk_shift", chunk_shift)
+        # begin_sample 19676                                                                                                                                                                                          
+        # end_chunk 64254                                                                                                                                                                                             
+        # chunk_shift 33386
+        raise e
+
 
     # Update targets if the appended signal is speech.
     if speech:
@@ -345,7 +357,7 @@ def augment_data(noise_datasets, speech_datasets, wavs, targets, lens_targ):
         wav_samples_speech,
         wav_samples_noise,
         speech1=False,
-        speech2=True,
+        speech2=False,
     )
 
     # Create chunk with speech=>noise transition
@@ -357,7 +369,7 @@ def augment_data(noise_datasets, speech_datasets, wavs, targets, lens_targ):
         wav_samples_speech,
         wav_samples_noise,
         wav_samples_noise,
-        speech1=True,
+        speech1=False,
         speech2=False,
     )
 
@@ -371,8 +383,8 @@ def augment_data(noise_datasets, speech_datasets, wavs, targets, lens_targ):
         wav_samples_speech,
         wav_samples_speech2,
         wav_samples_noise,
-        speech1=True,
-        speech2=True,
+        speech1=False,
+        speech2=False,
     )
 
     # Create chunk with noise=>noise transition
@@ -427,3 +439,83 @@ def augment_data(noise_datasets, speech_datasets, wavs, targets, lens_targ):
     wavs = wavs * torch.rand_like(max_amp).unsqueeze(1)
 
     return wavs, targets, lens
+
+
+class EmbeddingAugmentation(nn.Module):
+    def __init__(self, 
+                 noise_std=0.01, 
+                 dropout_prob=0.1, 
+                 salt_pepper_prob=0.01, 
+                 scale_factor=0.1, 
+                 frequency_factor=0.1,
+                 noise_types=["gaussian", "dropout"]):
+        """
+        Initialize the embedding augmentation module.
+        
+        Args:
+            noise_std (float): Standard deviation for Gaussian noise.
+            dropout_prob (float): Probability for dropout.
+            salt_pepper_prob (float): Probability for salt-and-pepper noise.
+            scale_factor (float): Scaling factor for scaled noise.
+            frequency_factor (float): Scaling factor for frequency noise.
+            noise_types (list): List of noise types to apply.
+        """
+        super(EmbeddingAugmentation, self).__init__()
+        self.noise_std = noise_std
+        self.dropout = nn.Dropout(p=dropout_prob)
+        self.salt_pepper_prob = salt_pepper_prob
+        self.scale_factor = scale_factor
+        self.noise_types = noise_types
+        self.frequency_factor = frequency_factor
+
+    
+    def add_gaussian_noise(self, embeddings):
+        noise = torch.randn_like(embeddings) * self.noise_std
+        return embeddings + noise
+
+    def add_salt_and_pepper_noise(self, embeddings):
+        mask = torch.rand_like(embeddings) < self.salt_pepper_prob
+        salt_pepper = torch.randint(0, 2, embeddings.shape, device=embeddings.device) * 2 - 1
+        return embeddings + mask.float() * salt_pepper.float()
+
+    def add_scaled_noise(self, embeddings):
+        scale = embeddings.abs().mean(dim=-1, keepdim=True) * self.scale_factor
+        noise = torch.randn_like(embeddings) * scale
+        return embeddings + noise
+    
+    def add_frequency_noise(self, embeddings):
+        fft_embeddings = torch.fft.fft(embeddings)
+        perturbation = torch.randn_like(fft_embeddings) * self.frequency_factor
+        noisy_embeddings = torch.fft.ifft(fft_embeddings + perturbation).real
+        return noisy_embeddings
+
+    def forward(self, embeddings):
+        """
+        Apply the selected noise types to the embeddings.
+        
+        Args:
+            embeddings (torch.Tensor): Input embeddings of shape (batch_size, embedding_dim).
+        
+        Returns:
+            torch.Tensor: Augmented embeddings.
+        """
+        if "gaussian" in self.noise_types:
+            embeddings = self.add_gaussian_noise(embeddings)
+        if "scaled" in self.noise_types:
+            embeddings = self.add_scaled_noise(embeddings)
+        if "frequency" in self.noise_types:
+            embeddings = self.add_frequency_noise(embeddings)
+        if "salt_pepper" in self.noise_types:
+            embeddings = self.add_salt_and_pepper_noise(embeddings)
+        if "dropout" in self.noise_types:
+            embeddings = self.dropout(embeddings)
+        return embeddings
+    
+    def multi_forward(self, embeddings, out_batch_size):
+        augmented_embeddings = [embeddings]  # Start with the original embeddings
+        for _ in range(out_batch_size-1):
+            augmented = self(embeddings.clone())  # Create augmented embeddings
+            augmented_embeddings.append(augmented)
+        
+        # Concatenate along the batch dimension
+        return torch.cat(augmented_embeddings, dim=0)

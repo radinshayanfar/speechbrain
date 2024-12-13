@@ -15,7 +15,7 @@
 # Seed and output folders
 seed: 1986
 __set_seed: !apply:speechbrain.utils.seed_everything [!ref <seed>]
-output_folder: !ref results/SVAD/<seed>
+output_folder: !ref results/SVAD_Augment_Embeddings/<seed>
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -54,7 +54,7 @@ max_subseg_dur: 3.0
 subseg_overlap: 1.5
 
 ####################### Training Parameters ####################################
-N_epochs: 100
+N_epochs: 20
 lr: 1.0
 lr_final: 0.1
 batch_size: 4
@@ -226,5 +226,3 @@ fast_train: True
 max_train_data: 32768
 max_valid_data: 4096
 max_test_data: 4096
-
-train_on_test: False
